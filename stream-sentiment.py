@@ -73,7 +73,7 @@ def load_models():
             vectorizer = pickle.load(f)
         
         # Load Random Forest model
-        with gzip.open('rf_sentiment_model.pkl.gz', 'rb') as f:
+        with gzip.open('model random forest.pkl.gz', 'rb') as f:
             model = pickle.load(f)
         
         # Debug info
