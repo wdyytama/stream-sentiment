@@ -6,8 +6,6 @@ import gzip
 import re
 from Sastrawi.Stemmer.StemmerFactory import StemmerFactory
 from sklearn.feature_extraction.text import TfidfVectorizer
-import plotly.express as px
-import plotly.graph_objects as go
 
 # Konfigurasi halaman
 st.set_page_config(
@@ -47,6 +45,16 @@ st.markdown("""
         border-radius: 0.5rem;
         border-left: 5px solid #ffc107;
     }
+    .probability-bar {
+        height: 20px;
+        border-radius: 10px;
+        margin: 5px 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: bold;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -67,6 +75,11 @@ def load_models():
         # Load Random Forest model
         with gzip.open('rf_sentiment_model.pkl.gz', 'rb') as f:
             model = pickle.load(f)
+        
+        # Debug info
+        st.sidebar.write("🔧 Model Info:")
+        st.sidebar.write(f"Vectorizer features: {len(vectorizer.get_feature_names_out())}")
+        st.sidebar.write(f"Model expects: {model.n_features_in_} features")
         
         return vectorizer, model
     except FileNotFoundError as e:
@@ -100,26 +113,86 @@ def preprocess_text(text, stemmer):
     
     return text
 
-def predict_sentiment(text, vectorizer, model, stemmer):
+def predict_sentiment_dummy(text):
+    """Prediksi sentimen dummy untuk testing"""
+    import random
+    
+    # Simple rule-based prediction for demo
+    text_lower = text.lower()
+    
+    positive_words = ['baik', 'bagus', 'senang', 'suka', 'hebat', 'mantap', 'keren']
+    negative_words = ['buruk', 'jelek', 'sedih', 'benci', 'kecewa', 'marah', 'parah']
+    
+    pos_count = sum(1 for word in positive_words if word in text_lower)
+    neg_count = sum(1 for word in negative_words if word in text_lower)
+    
+    if pos_count > neg_count:
+        return "Positif", random.uniform(70, 95), [0.1, 0.2, 0.7]
+    elif neg_count > pos_count:
+        return "Negatif", random.uniform(70, 95), [0.7, 0.2, 0.1]
+    else:
+        return "Netral", random.uniform(60, 80), [0.3, 0.4, 0.3]
     """Prediksi sentimen dari teks"""
-    # Preprocessing
-    processed_text = preprocess_text(text, stemmer)
+    try:
+        # Preprocessing
+        processed_text = preprocess_text(text, stemmer)
+        
+        # Debug: tampilkan teks yang diprocess
+        st.sidebar.write("🔍 Debug Info:")
+        st.sidebar.write(f"Original: {text[:50]}...")
+        st.sidebar.write(f"Processed: {processed_text[:50]}...")
+        
+        # Vectorization
+        text_vector = vectorizer.transform([processed_text])
+        
+        # Debug: tampilkan dimensi vector
+        st.sidebar.write(f"Vector shape: {text_vector.shape}")
+        st.sidebar.write(f"Vector features: {text_vector.shape[1]}")
+        
+        # Prediction
+        prediction = model.predict(text_vector)[0]
+        probability = model.predict_proba(text_vector)[0]
+        
+        # Map prediction to label
+        label_map = {0: 'Negatif', 1: 'Netral', 2: 'Positif'}
+        sentiment_label = label_map[prediction]
+        
+        # Get confidence score
+        confidence = max(probability) * 100
+        
+        return sentiment_label, confidence, probability
+        
+    except ValueError as e:
+        st.error(f"Error dalam prediksi: {str(e)}")
+        st.error("Kemungkinan model dan vectorizer tidak kompatibel")
+        return "Error", 0, [0, 0, 0]
+    except Exception as e:
+        st.error(f"Unexpected error: {str(e)}")
+        return "Error", 0, [0, 0, 0]
+
+def display_probability_bars(probabilities):
+    """Menampilkan probability bars menggunakan HTML/CSS"""
+    labels = ['Negatif', 'Netral', 'Positif']
+    colors = ['#dc3545', '#ffc107', '#28a745']
     
-    # Vectorization
-    text_vector = vectorizer.transform([processed_text])
+    st.subheader("Distribusi Probabilitas")
     
-    # Prediction
-    prediction = model.predict(text_vector)[0]
-    probability = model.predict_proba(text_vector)[0]
-    
-    # Map prediction to label
-    label_map = {0: 'Negatif', 1: 'Netral', 2: 'Positif'}
-    sentiment_label = label_map[prediction]
-    
-    # Get confidence score
-    confidence = max(probability) * 100
-    
-    return sentiment_label, confidence, probability
+    for i, (label, prob, color) in enumerate(zip(labels, probabilities, colors)):
+        percentage = prob * 100
+        st.markdown(f"**{label}**: {percentage:.2f}%")
+        
+        # Create progress bar
+        st.progress(prob)
+        
+        # Alternative: HTML bar
+        bar_html = f"""
+        <div style="background-color: #f0f0f0; border-radius: 10px; padding: 3px; margin: 5px 0;">
+            <div style="background-color: {color}; width: {percentage}%; height: 20px; border-radius: 7px; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px;">
+                {percentage:.1f}%
+            </div>
+        </div>
+        """
+        st.markdown(bar_html, unsafe_allow_html=True)
 
 # Load data untuk analisis batch
 @st.cache_data
@@ -130,6 +203,42 @@ def load_data():
     except FileNotFoundError:
         st.warning("File inacoved-deployment.csv tidak ditemukan. Fitur analisis batch tidak tersedia.")
         return None
+
+def create_simple_chart(sentiment_counts):
+    """Membuat chart sederhana menggunakan streamlit native"""
+    st.subheader("Distribusi Sentimen")
+    
+    # Menggunakan bar_chart bawaan streamlit
+    chart_data = pd.DataFrame({
+        'Sentimen': sentiment_counts.index,
+        'Jumlah': sentiment_counts.values
+    }).set_index('Sentimen')
+    
+    st.bar_chart(chart_data)
+    
+    # Tambahan: menampilkan dalam bentuk metrics
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric(
+            label="😠 Negatif",
+            value=sentiment_counts.get('Negatif', 0),
+            delta=f"{(sentiment_counts.get('Negatif', 0)/sentiment_counts.sum()*100):.1f}%"
+        )
+    
+    with col2:
+        st.metric(
+            label="😐 Netral", 
+            value=sentiment_counts.get('Netral', 0),
+            delta=f"{(sentiment_counts.get('Netral', 0)/sentiment_counts.sum()*100):.1f}%"
+        )
+    
+    with col3:
+        st.metric(
+            label="😊 Positif",
+            value=sentiment_counts.get('Positif', 0),
+            delta=f"{(sentiment_counts.get('Positif', 0)/sentiment_counts.sum()*100):.1f}%"
+        )
 
 # Main App
 def main():
@@ -194,18 +303,8 @@ def main():
                         """, unsafe_allow_html=True)
                 
                 with col2:
-                    # Probability chart
-                    labels = ['Negatif', 'Netral', 'Positif']
-                    fig = go.Figure(data=[
-                        go.Bar(x=labels, y=probabilities*100, 
-                               marker_color=['#dc3545', '#ffc107', '#28a745'])
-                    ])
-                    fig.update_layout(
-                        title="Distribusi Probabilitas",
-                        yaxis_title="Probabilitas (%)",
-                        height=300
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
+                    # Display probability menggunakan fungsi custom
+                    display_probability_bars(probabilities)
             else:
                 st.warning("Mohon masukkan teks untuk dianalisis.")
     
@@ -259,6 +358,10 @@ def main():
                                 mime='text/csv'
                             )
                             
+                            # Show simple analytics
+                            sentiment_dist = results_df['sentiment'].value_counts()
+                            create_simple_chart(sentiment_dist)
+                            
             except Exception as e:
                 st.error(f"Error processing file: {e}")
     
@@ -268,41 +371,12 @@ def main():
         # Load data
         df = load_data()
         if df is not None:
-            # Visualisasi distribusi sentimen
+            # Visualisasi distribusi sentimen menggunakan streamlit native
             sentiment_counts = df['sentiment'].value_counts()
             
-            col1, col2 = st.columns(2)
+            create_simple_chart(sentiment_counts)
             
-            with col1:
-                # Pie chart
-                fig_pie = px.pie(
-                    values=sentiment_counts.values,
-                    names=sentiment_counts.index,
-                    title="Distribusi Sentimen dalam Dataset",
-                    color_discrete_map={
-                        'Positif': '#28a745',
-                        'Negatif': '#dc3545',
-                        'Netral': '#ffc107'
-                    }
-                )
-                st.plotly_chart(fig_pie, use_container_width=True)
-            
-            with col2:
-                # Bar chart
-                fig_bar = px.bar(
-                    x=sentiment_counts.index,
-                    y=sentiment_counts.values,
-                    title="Jumlah Data per Sentimen",
-                    color=sentiment_counts.index,
-                    color_discrete_map={
-                        'Positif': '#28a745',
-                        'Negatif': '#dc3545',
-                        'Netral': '#ffc107'
-                    }
-                )
-                st.plotly_chart(fig_bar, use_container_width=True)
-            
-            # Statistik
+            # Statistik detail
             st.subheader("📊 Statistik Dataset")
             col1, col2, col3, col4 = st.columns(4)
             
@@ -314,6 +388,11 @@ def main():
                 st.metric("Data Negatif", sentiment_counts.get('Negatif', 0))
             with col4:
                 st.metric("Data Netral", sentiment_counts.get('Netral', 0))
+                
+            # Tampilkan sample data
+            st.subheader("📋 Sample Data")
+            st.dataframe(df.head(10))
+            
         else:
             st.info("Data tidak tersedia untuk dashboard analytics.")
     
@@ -346,6 +425,17 @@ def main():
         1. **Prediksi Tunggal**: Masukkan satu teks untuk dianalisis sentimennya
         2. **Analisis Batch**: Upload file CSV dengan kolom 'text' untuk analisis massal
         3. **Dashboard Analytics**: Lihat visualisasi distribusi sentimen dalam dataset
+        """)
+        
+        st.subheader("📚 Dependencies")
+        st.code("""
+streamlit==1.28.0
+pandas==1.5.3
+numpy==1.24.3
+scikit-learn==1.3.0
+nltk==3.8.1
+Sastrawi==1.0.1
+joblib==1.3.2
         """)
 
 if __name__ == "__main__":
